@@ -10,13 +10,16 @@ import com.study.moneygo.user.entity.User;
 import com.study.moneygo.user.repository.UserRepository;
 import com.study.moneygo.util.account.AccountNumberGenerator;
 import com.study.moneygo.util.security.JwtTokenProvider;
-import jakarta.transaction.Transactional;
+import com.sun.nio.sctp.IllegalReceiveException;
 import lombok.RequiredArgsConstructor;
 import org.springframework.security.authentication.AuthenticationManager;
+import org.springframework.security.authentication.BadCredentialsException;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Propagation;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
 
@@ -68,10 +71,9 @@ public class AuthService {
         );
     }
 
-    @Transactional
     public LoginResponse login(LoginRequest request) {
         User user = userRepository.findByEmail(request.getEmail())
-                .orElseThrow(() -> new IllegalArgumentException("이메일 또는 비밀번호가 올바르지 않습니다."));
+                .orElseThrow(() -> new IllegalArgumentException("해당 계정을 찾을 수 없습니다."));
         // 계정 Lock 체크
         if (user.getStatus() == User.UserStatus.LOCKED) {
             throw new IllegalArgumentException("계정이 잠겨있습니다. 관리자에게 문의하세요.");
@@ -85,8 +87,7 @@ public class AuthService {
                     )
             );
             // 로그인 성공하면 failedAttempts 초기화 해주기
-            user.resetFailedAttempts();
-            userRepository.save(user);
+            resetFailedAttempts(user.getId());
 
             String token = jwtTokenProvider.generateToken(authentication);
             Long expiresIn = jwtTokenProvider.getExpirationTime();
@@ -103,12 +104,32 @@ public class AuthService {
                     user.getName(),
                     account.getAccountNumber()
             );
-        } catch (Exception e) {
+        } catch (BadCredentialsException e) {
             // 로그인 로직에 실패했으니 failedAttempts 카운트 증가
-            user.incrementFailedAttempts();
-            userRepository.save(user);
+            incrementFailedAttempts(user.getId());
+
+            System.out.println("===== 로그인 실패 : " + user.getEmail() + " , 실패 횟수 : " + user.getFailedLoginAttempts() + " =====");
             throw new IllegalArgumentException("이메일 또는 비밀번호가 올바르지 않습니다.");
         }
+    }
+
+    @Transactional
+    public void incrementFailedAttempts(Long userId) {
+        User user = userRepository.findById(userId)
+                .orElseThrow(() -> new IllegalReceiveException("사용자를 찾을 수 없습니다."));
+        user.incrementFailedAttempts();
+        userRepository.save(user);
+
+        System.out.println("===== 로그인 실패 : "+ user.getEmail() + ", 실패 횟수 : " + user.getFailedLoginAttempts() + ", 상태 : " + user.getStatus() + " =====");
+    }
+
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    public void resetFailedAttempts(Long userId) {
+        User user = userRepository.findById(userId)
+                .orElseThrow(() -> new IllegalArgumentException("사용자를 찾을 수 없습니다."));
+        user.resetFailedAttempts();
+        userRepository.save(user);
+
     }
 
     private String generateUniqueAccountNumber() {
