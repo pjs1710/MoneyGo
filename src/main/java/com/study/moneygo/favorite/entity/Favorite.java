@@ -1,5 +1,6 @@
 package com.study.moneygo.favorite.entity;
 
+import com.fasterxml.jackson.annotation.JsonIgnore;
 import com.study.moneygo.user.entity.User;
 import com.study.moneygo.util.entity.BaseEntity;
 import jakarta.persistence.*;
@@ -27,6 +28,7 @@ public class Favorite extends BaseEntity {
 
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "user_id", nullable = false)
+    @JsonIgnore
     private User user;
 
     @Column(name = "account_number", nullable = false, length = 20)

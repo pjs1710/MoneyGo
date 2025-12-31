@@ -107,31 +107,47 @@ public class FavoriteService {
 
     @Transactional
     public FavoriteResponse updateFavorite(Long favoriteId, FavoriteUpdateRequest request) {
-        String email = getCurrentUserEmail();
-        User user = userRepository.findByEmail(email)
-                .orElseThrow(() -> new IllegalArgumentException("사용자를 찾을 수 없습니다."));
+        try {
+            log.info("즐겨찾기 수정 시작: favoriteId={}", favoriteId);
 
-        Favorite favorite = favoriteRepository.findById(favoriteId)
-                .orElseThrow(() -> new IllegalArgumentException("즐겨찾기를 찾을 수 없습니다."));
+            String email = getCurrentUserEmail();
+            log.info("현재 사용자 이메일: {}", email);
 
-        // 소유권 확인
-        if (!favorite.getUser().getId().equals(user.getId())) {
-            throw new IllegalArgumentException("접근 권한이 없습니다.");
+            User user = userRepository.findByEmail(email)
+                    .orElseThrow(() -> new IllegalArgumentException("사용자를 찾을 수 없습니다."));
+            log.info("사용자 조회 완료: userId={}", user.getId());
+
+            Favorite favorite = favoriteRepository.findById(favoriteId)
+                    .orElseThrow(() -> new IllegalArgumentException("즐겨찾기를 찾을 수 없습니다."));
+            log.info("즐겨찾기 조회 완료: favoriteId={}, userId={}", favorite.getId(), favorite.getUser().getId());
+
+            // 소유권 확인
+            if (!favorite.getUser().getId().equals(user.getId())) {
+                throw new IllegalArgumentException("접근 권한이 없습니다.");
+            }
+            log.info("소유권 확인 완료");
+
+            // 업데이트 - null이 아닐 때만 업데이트
+            if (request.getNickname() != null && !request.getNickname().isEmpty()) {
+                log.info("별칭 업데이트: {} -> {}", favorite.getNickname(), request.getNickname());
+                favorite.updateNickname(request.getNickname());
+            }
+            if (request.getMemo() != null && !request.getMemo().isEmpty()) {
+                log.info("메모 업데이트: {} -> {}", favorite.getMemo(), request.getMemo());
+                favorite.updateMemo(request.getMemo());
+            }
+
+            log.info("즐겨찾기 수정 완료: favoriteId={}", favoriteId);
+
+            FavoriteResponse response = FavoriteResponse.of(favorite);
+            log.info("Response 생성 완료");
+
+            return response;
+
+        } catch (Exception e) {
+            log.error("즐겨찾기 수정 중 오류 발생: favoriteId={}, error={}", favoriteId, e.getMessage(), e);
+            throw e;
         }
-
-        // 업데이트
-        if (request.getNickname() != null) {
-            favorite.updateNickname(request.getNickname());
-        }
-        if (request.getMemo() != null) {
-            favorite.updateMemo(request.getMemo());
-        }
-
-        Favorite updatedFavorite = favoriteRepository.save(favorite);
-
-        log.info("즐겨찾기 수정: favoriteId={}", favoriteId);
-
-        return FavoriteResponse.of(updatedFavorite);
     }
 
     @Transactional
