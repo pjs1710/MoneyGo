@@ -18,8 +18,11 @@ public interface ScheduledTransferRepository extends JpaRepository<ScheduledTran
     @Query("SELECT st FROM ScheduledTransfer st WHERE st.fromAccount.user.id = :userId ORDER BY st.scheduledAt DESC")
     Page<ScheduledTransfer> findByUserId(@Param("userId") Long userId, Pageable pageable);
 
-    // 실행 대기 중인 예약 조회
-    @Query("SELECT st FROM ScheduledTransfer st WHERE st.status = 'PENDING' AND st.scheduledAt <= :now")
+    // 실행 대기 중인 예약 조회 (User까지 fetch join)
+    @Query("SELECT st FROM ScheduledTransfer st " +
+            "JOIN FETCH st.fromAccount a " +
+            "JOIN FETCH a.user " +
+            "WHERE st.status = 'PENDING' AND st.scheduledAt <= :now")
     List<ScheduledTransfer> findPendingSchedules(@Param("now") LocalDateTime now);
 
     // 특정 상태의 예약 조회

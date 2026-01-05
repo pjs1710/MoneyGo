@@ -21,6 +21,7 @@ import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
@@ -198,37 +199,52 @@ public class ScheduledTransferService {
 
             // 예약 완료 처리
             schedule.execute(transaction);
-
-            // 성공 시 알림
-            notificationService.createScheduledTransferExecutedNotification(
-                    schedule.getFromAccount().getUser(),
-                    transaction,
-                    schedule.getDescription()
-            );
-
             scheduledTransferRepository.save(schedule);
 
             log.info("예약 송금 실행 완료: scheduleId={}, transactionId={}", schedule.getId(), transaction.getId());
 
+            // 알림 생성 (별도 트랜잭션으로 실행 - 실패해도 송금은 완료)
+            Long userId = fromAccount.getUser().getId();
+            Long transactionId = transaction.getId();
+            String description = schedule.getDescription();
+            // 트랜잭션 커밋 후 실행되도록 나중에 호출
+            sendScheduledTransferNotificationAsync(userId, transactionId, schedule.getAmount(), description, true);
+
         } catch (Exception e) {
             // 실행 실패 처리
             schedule.fail(e.getMessage());
-
-            // 실패 시 알림
-            notificationService.createScheduledTransferFailedNotification(
-                    schedule.getFromAccount().getUser(),
-                    schedule.getAmount(),
-                    e.getMessage()
-            );
-
             scheduledTransferRepository.save(schedule);
 
             log.error("예약 송금 실행 실패: scheduleId={}, error={}", schedule.getId(), e.getMessage());
+
+            // 실패 알림 생성 (별도 트랜잭션)
+            Long userId = schedule.getFromAccount().getUser().getId();
+            sendScheduledTransferNotificationAsync(userId, null, schedule.getAmount(), e.getMessage(), false);
         }
     }
 
     private String getCurrentUserEmail() {
         Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
         return authentication.getName();
+    }
+
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    public void sendScheduledTransferNotificationAsync(Long userId, Long transactionId,
+                                                       java.math.BigDecimal amount,
+                                                       String info, boolean isSuccess) {
+        try {
+            User user = userRepository.findById(userId)
+                    .orElseThrow(() -> new IllegalStateException("사용자를 찾을 수 없습니다."));
+
+            if (isSuccess) {
+                Transaction transaction = transactionRepository.findById(transactionId)
+                        .orElseThrow(() -> new IllegalStateException("거래를 찾을 수 없습니다."));
+                notificationService.createScheduledTransferExecutedNotification(user, transaction, info);
+            } else {
+                notificationService.createScheduledTransferFailedNotification(user, amount, info);
+            }
+        } catch (Exception e) {
+            log.error("알림 전송 실패: userId={}, isSuccess={}, error={}", userId, isSuccess, e.getMessage());
+        }
     }
 }

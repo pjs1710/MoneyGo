@@ -31,99 +31,113 @@ public class NotificationService {
 
     @Transactional
     public void createTransferNotification(Transaction transaction) {
+        String senderName = transaction.getFromAccount().getUser().getName();
+        String receiverName = transaction.getToAccount().getUser().getName();
+        BigDecimal amount = transaction.getAmount();
+
         // 송금 받은 사람에게 알림
-        createNotification(
+        createNotificationWithEmail(
                 transaction.getToAccount().getUser(),
                 Notification.NotificationType.TRANSFER_RECEIVED,
                 "송금을 받았습니다",
-                String.format("%s님으로부터 %s원을 받았습니다.",
-                        transaction.getFromAccount().getUser().getName(),
-                        formatAmount(transaction.getAmount())),
+                String.format("%s님으로부터 %s원을 받았습니다.", senderName, formatAmount(amount)),
                 transaction.getId(),
-                transaction.getAmount()
+                amount,
+                senderName,
+                null
         );
 
         // 송금 보낸 사람에게 알림
-        createNotification(
+        createNotificationWithEmail(
                 transaction.getFromAccount().getUser(),
                 Notification.NotificationType.TRANSFER_SENT,
                 "송금이 완료되었습니다",
-                String.format("%s님에게 %s원 송금이 완료되었습니다.",
-                        transaction.getToAccount().getUser().getName(),
-                        formatAmount(transaction.getAmount())),
+                String.format("%s님에게 %s원 송금이 완료되었습니다.", receiverName, formatAmount(amount)),
                 transaction.getId(),
-                transaction.getAmount()
+                amount,
+                receiverName,
+                null
         );
     }
 
     @Transactional
     public void createQrPaymentNotification(Transaction transaction) {
+        String buyerName = transaction.getFromAccount().getUser().getName();
+        String sellerName = transaction.getToAccount().getUser().getName();
+        BigDecimal amount = transaction.getAmount();
+
         // QR 결제 받은 사람 (판매자)
-        createNotification(
+        createNotificationWithEmail(
                 transaction.getToAccount().getUser(),
                 Notification.NotificationType.QR_PAYMENT_RECEIVED,
                 "QR 결제를 받았습니다",
-                String.format("%s님으로부터 %s원 QR 결제를 받았습니다.",
-                        transaction.getFromAccount().getUser().getName(),
-                        formatAmount(transaction.getAmount())),
+                String.format("%s님으로부터 %s원 QR 결제를 받았습니다.", buyerName, formatAmount(amount)),
                 transaction.getId(),
-                transaction.getAmount()
+                amount,
+                buyerName,
+                null
         );
 
         // QR 결제 보낸 사람 (구매자)
-        createNotification(
+        createNotificationWithEmail(
                 transaction.getFromAccount().getUser(),
                 Notification.NotificationType.QR_PAYMENT_SENT,
                 "QR 결제가 완료되었습니다",
-                String.format("%s님에게 %s원 QR 결제가 완료되었습니다.",
-                        transaction.getToAccount().getUser().getName(),
-                        formatAmount(transaction.getAmount())),
+                String.format("%s님에게 %s원 QR 결제가 완료되었습니다.", sellerName, formatAmount(amount)),
                 transaction.getId(),
-                transaction.getAmount()
+                amount,
+                sellerName,
+                null
         );
     }
 
     @Transactional
     public void createScheduledTransferExecutedNotification(User user, Transaction transaction, String description) {
-        createNotification(
+        createNotificationWithEmail(
                 user,
                 Notification.NotificationType.SCHEDULED_TRANSFER_EXECUTED,
                 "예약 송금이 실행되었습니다",
                 String.format("예약된 송금 %s원이 실행되었습니다.", formatAmount(transaction.getAmount())),
                 transaction.getId(),
-                transaction.getAmount()
+                transaction.getAmount(),
+                null,
+                description
         );
     }
 
     @Transactional
     public void createScheduledTransferFailedNotification(User user, BigDecimal amount, String reason) {
-        createNotification(
+        createNotificationWithEmail(
                 user,
                 Notification.NotificationType.SCHEDULED_TRANSFER_FAILED,
                 "예약 송금 실행이 실패했습니다",
-                String.format("예약된 송금 %s원 실행이 실패했습니다. 사유: %s",
-                        formatAmount(amount), reason),
+                String.format("예약된 송금 %s원 실행이 실패했습니다. 사유: %s", formatAmount(amount), reason),
                 null,
-                amount
+                amount,
+                null,
+                reason
         );
     }
 
     @Transactional
     public void createLargeAmountAlertNotification(User user, BigDecimal amount, String transactionType) {
-        createNotification(
+        createNotificationWithEmail(
                 user,
                 Notification.NotificationType.LARGE_AMOUNT_ALERT,
                 "고액 거래 알림",
                 String.format("고액 거래(%s)가 발생했습니다: %s원", transactionType, formatAmount(amount)),
                 null,
-                amount
+                amount,
+                null,
+                transactionType
         );
     }
 
     @Transactional
-    protected void createNotification(User user, Notification.NotificationType type,
-                                      String title, String content,
-                                      Long transactionId, BigDecimal amount) {
+    protected void createNotificationWithEmail(User user, Notification.NotificationType type,
+                                               String title, String content,
+                                               Long transactionId, BigDecimal amount,
+                                               String counterpartyName, String additionalInfo) {
         // 알림 생성
         Notification notification = Notification.builder()
                 .user(user)
@@ -138,12 +152,12 @@ public class NotificationService {
         notificationRepository.save(notification);
         log.info("알림 생성: userId={}, type={}", user.getId(), type);
 
-        // 알림 설정 확인 후 이메일 전송 (비동기적으로 처리, 실패해도 트랜잭션 롤백 안 됨)
+        // 알림 설정 확인 후 이메일 전송
         try {
             NotificationSetting setting = getOrCreateNotificationSetting(user);
 
             if (setting.shouldNotify(type)) {
-                sendEmailNotification(user, type, title, content, amount);
+                sendEmailNotificationWithDetails(user, type, amount, counterpartyName, additionalInfo);
             }
 
             // 고액 거래 알림
@@ -153,9 +167,32 @@ public class NotificationService {
                 emailService.sendLargeAmountAlertEmail(user.getEmail(), amount, type.name());
             }
         } catch (Exception e) {
-            // 이메일 전송 실패는 로그만 남기고 트랜잭션은 계속 진행
             log.error("이메일 전송 중 오류 발생했지만 알림은 생성됨: userId={}, type={}, error={}",
                     user.getId(), type, e.getMessage());
+        }
+    }
+
+    private void sendEmailNotificationWithDetails(User user, Notification.NotificationType type,
+                                                  BigDecimal amount, String counterpartyName,
+                                                  String additionalInfo) {
+        try {
+            switch (type) {
+                case TRANSFER_RECEIVED ->
+                        emailService.sendTransferReceivedEmail(user.getEmail(), counterpartyName, amount);
+                case TRANSFER_SENT ->
+                        emailService.sendTransferSentEmail(user.getEmail(), counterpartyName, amount);
+                case SCHEDULED_TRANSFER_EXECUTED ->
+                        emailService.sendScheduledTransferExecutedEmail(user.getEmail(), amount, additionalInfo);
+                case SCHEDULED_TRANSFER_FAILED ->
+                        emailService.sendScheduledTransferFailedEmail(user.getEmail(), amount, additionalInfo);
+                case QR_PAYMENT_RECEIVED ->
+                        emailService.sendQrPaymentEmail(user.getEmail(), counterpartyName, amount, true);
+                case QR_PAYMENT_SENT ->
+                        emailService.sendQrPaymentEmail(user.getEmail(), counterpartyName, amount, false);
+                default -> log.debug("이메일 전송 불필요: type={}", type);
+            }
+        } catch (Exception e) {
+            log.error("이메일 전송 중 오류: type={}, error={}", type, e.getMessage());
         }
     }
 
@@ -163,10 +200,8 @@ public class NotificationService {
         return notificationSettingRepository.findByUserId(user.getId())
                 .orElseGet(() -> {
                     try {
-                        // 동시성 문제 방지: 트랜잭션 전파를 REQUIRES_NEW로 설정
                         return createDefaultSettingInNewTransaction(user);
                     } catch (Exception e) {
-                        // 중복 생성 시도 시 다시 조회
                         log.warn("알림 설정 생성 중 오류 발생 (중복 가능성), 재조회: userId={}", user.getId());
                         return notificationSettingRepository.findByUserId(user.getId())
                                 .orElseThrow(() -> new IllegalStateException("알림 설정을 생성할 수 없습니다."));
@@ -176,7 +211,6 @@ public class NotificationService {
 
     @Transactional(propagation = org.springframework.transaction.annotation.Propagation.REQUIRES_NEW)
     public NotificationSetting createDefaultSettingInNewTransaction(User user) {
-        // 동시성 문제 방지: 다시 한번 확인
         return notificationSettingRepository.findByUserId(user.getId())
                 .orElseGet(() -> {
                     NotificationSetting setting = NotificationSetting.builder()
@@ -191,19 +225,6 @@ public class NotificationService {
                             .build();
                     return notificationSettingRepository.save(setting);
                 });
-    }
-
-    private void sendEmailNotification(User user, Notification.NotificationType type,
-                                       String title, String content, BigDecimal amount) {
-        switch (type) {
-            case TRANSFER_RECEIVED -> emailService.sendNotificationEmail(user.getEmail(), title, content);
-            case TRANSFER_SENT -> emailService.sendNotificationEmail(user.getEmail(), title, content);
-            case SCHEDULED_TRANSFER_EXECUTED -> emailService.sendNotificationEmail(user.getEmail(), title, content);
-            case SCHEDULED_TRANSFER_FAILED -> emailService.sendNotificationEmail(user.getEmail(), title, content);
-            case QR_PAYMENT_RECEIVED, QR_PAYMENT_SENT ->
-                    emailService.sendNotificationEmail(user.getEmail(), title, content);
-            default -> log.debug("이메일 전송 불필요: type={}", type);
-        }
     }
 
     @Transactional(readOnly = true)
