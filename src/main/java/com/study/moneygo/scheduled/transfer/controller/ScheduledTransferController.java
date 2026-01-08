@@ -14,7 +14,7 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
 @RestController
-@RequestMapping("/api/sheduled-transfers")
+@RequestMapping("/api/scheduled-transfers")
 @RequiredArgsConstructor
 public class ScheduledTransferController {
 
