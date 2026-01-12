@@ -2,10 +2,7 @@ package com.study.moneygo.user.entity;
 
 import com.study.moneygo.util.entity.BaseEntity;
 import jakarta.persistence.*;
-import lombok.AllArgsConstructor;
-import lombok.Builder;
-import lombok.Getter;
-import lombok.NoArgsConstructor;
+import lombok.*;
 
 @Entity
 @Table(name = "users")
@@ -37,6 +34,13 @@ public class User extends BaseEntity {
     @Column(name = "failed_login_attempts")
     private Integer failedLoginAttempts = 0;
 
+    @Setter
+    @Column(name = "simple_password", length = 100)
+    private String simplePassword; // 간편 비밀번호 6자리, 암호화 저장
+
+    @Column(name = "failed_simple_password_attempts")
+    private Integer failedSimplePasswordAttempts = 0;
+
     /** =====================================
      *              비즈니스 메서드
      *  ===================================== */
@@ -51,6 +55,22 @@ public class User extends BaseEntity {
 
     public void resetFailedAttempts() {
         this.failedLoginAttempts = 0;
+    }
+
+    public void incrementFailedSimplePasswordAttempts() {
+        this.failedSimplePasswordAttempts++;
+        // 간편 비밀번호 5회 이상 실패 시 LOCK
+        if (this.failedSimplePasswordAttempts >= 5) {
+            this.status = UserStatus.LOCKED;
+        }
+    }
+
+    public void resetFailedSimplePasswordAttempts() {
+        this.failedSimplePasswordAttempts = 0;
+    }
+
+    public boolean hasSimplePassword() {
+        return this.simplePassword != null && !this.simplePassword.isEmpty();
     }
 
     public void lock() {
