@@ -11,18 +11,20 @@ import com.study.moneygo.qrpayment.dto.response.QrGenerateResponse;
 import com.study.moneygo.qrpayment.dto.response.QrPayResponse;
 import com.study.moneygo.qrpayment.entity.QrPayment;
 import com.study.moneygo.qrpayment.repository.QrPaymentRepository;
+import com.study.moneygo.simplepassword.service.SimplePasswordService;
 import com.study.moneygo.user.entity.User;
 import com.study.moneygo.user.repository.UserRepository;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
-import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
 import java.util.UUID;
 
+@Slf4j
 @Service
 @RequiredArgsConstructor
 public class QrPaymentService {
@@ -31,7 +33,7 @@ public class QrPaymentService {
     private final AccountRepository accountRepository;
     private final TransactionRepository transactionRepository;
     private final UserRepository userRepository;
-    private final PasswordEncoder passwordEncoder;
+    private final SimplePasswordService simplePasswordService;
     private final NotificationService notificationService;
 
     private static final int QR_EXPIRATION_MINUTES = 10; // QR 유효시간 10분
@@ -63,6 +65,7 @@ public class QrPaymentService {
                 .build();
         QrPayment savedQrPayment = qrPaymentRepository.save(qrPayment);
 
+        log.info("QR 코드 생성 완료: qrCode={}, sellerId={}", qrCode, seller.getId());
         return QrGenerateResponse.of(savedQrPayment);
     }
 
@@ -72,6 +75,8 @@ public class QrPaymentService {
         String email = getCurrentUserEmail();
         User buyer = userRepository.findByEmail(email)
                 .orElseThrow(() -> new IllegalArgumentException("사용자를 찾을 수 없습니다."));
+
+        log.info("QR 결제 시작: buyerEmail={}, qrCode={}", email, request.getQrCode());
 
         // QR결제 정보 조회
         QrPayment qrPayment = qrPaymentRepository.findByQrCode(request.getQrCode())
@@ -93,19 +98,24 @@ public class QrPaymentService {
         Account buyerAccount = accountRepository.findByUserIdForUpdate(buyer.getId())
                 .orElseThrow(() -> new IllegalStateException("계좌 정보를 찾을 수 없습니다."));
 
+        log.info("구매자 계좌 조회 완료: buyerAccountId={}, balance={}",
+                buyerAccount.getId(), buyerAccount.getBalance());
+
         // 판매자 계좌 조회 (비관적 Lock)
         Account sellerAccount = accountRepository.findByIdForUpdate(qrPayment.getSellerAccount().getId())
                 .orElseThrow(() -> new IllegalStateException("판매자 계좌를 찾을 수 없습니다."));
+
+        log.info("판매자 계좌 조회 완료: sellerAccountId={}", sellerAccount.getId());
 
         // 본인 QR코드 결제 방지
         if (buyerAccount.getId().equals(sellerAccount.getId())) {
             throw new IllegalArgumentException("본인이 생성한 QR 코드는 결제할 수 없습니다.");
         }
 
-        // 비밀번호 확인
-        if (!passwordEncoder.matches(request.getPassword(), buyer.getPassword())) {
-            throw new IllegalArgumentException("비밀번호가 올바르지 않습니다.");
-        }
+        // 간편 비밀번호 확인
+        log.info("간편 비밀번호 확인 시작: buyerId={}", buyer.getId());
+        simplePasswordService.verifySimplePasswordForUser(buyer.getId(), request.getPassword());
+        log.info("간편 비밀번호 확인 완료");
 
         // 계좌 상태 확인
         if (!buyerAccount.isActive() || !sellerAccount.isActive()) {
@@ -129,16 +139,18 @@ public class QrPaymentService {
                 .build();
 
         try {
+            log.info("QR 결제 실행 시작: amount={}", qrPayment.getAmount());
+
             // 결제 실행
             buyerAccount.withdraw(qrPayment.getAmount());
+            log.info("구매자 출금 완료: newBalance={}", buyerAccount.getBalance());
+
             sellerAccount.deposit(qrPayment.getAmount());
+            log.info("판매자 입금 완료: newBalance={}", sellerAccount.getBalance());
 
             // 거래 완료
             transaction.complete();
             qrPayment.complete(transaction);
-
-            // 알림 생성
-            notificationService.createQrPaymentNotification(transaction);
 
             // 저장
             transactionRepository.save(transaction);
@@ -146,16 +158,40 @@ public class QrPaymentService {
             accountRepository.save(sellerAccount);
             qrPaymentRepository.save(qrPayment);
 
+            log.info("QR 결제 저장 완료: transactionId={}", transaction.getId());
+
+            // 알림 생성 (실패해도 결제는 완료됨)
+            try {
+                log.info("알림 생성 시작");
+                notificationService.createQrPaymentNotification(transaction);
+                log.info("알림 생성 완료");
+            } catch (Exception notificationError) {
+                // 알림 실패는 로그만 남기고 결제는 정상 진행
+                log.error("알림 생성 실패 (결제는 정상 완료): transactionId={}, error={}",
+                        transaction.getId(), notificationError.getMessage(), notificationError);
+            }
+
+            log.info("QR 결제 완료: transactionId={}, buyerId={}, sellerId={}",
+                    transaction.getId(), buyer.getId(), sellerAccount.getUser().getId());
+
             return QrPayResponse.of(
                     qrPayment,
                     transaction,
                     sellerAccount.getUser().getName(),
                     buyerAccount.getBalance()
             );
-        } catch (Exception e) {
+        } catch (IllegalArgumentException | IllegalStateException e) {
+            // 비즈니스 로직 오류 (잔액 부족, 상태 오류 등)
+            log.error("QR 결제 실패 (비즈니스 로직 오류): {}", e.getMessage());
             transaction.fail(e.getMessage());
             transactionRepository.save(transaction);
-            throw new IllegalStateException("QR 결제 처리 중 오류가 발생했습니다 : " + e.getMessage());
+            throw e; // 원래 예외를 그대로 던짐
+        } catch (Exception e) {
+            // 예상치 못한 시스템 오류
+            log.error("QR 결제 실패 (시스템 오류): {}", e.getMessage(), e);
+            transaction.fail(e.getMessage());
+            transactionRepository.save(transaction);
+            throw new IllegalStateException("QR 결제 처리 중 오류가 발생했습니다 : " + e.getMessage(), e);
         }
     }
 
