@@ -24,6 +24,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import java.util.UUID;
 
@@ -42,13 +43,16 @@ public class ScheduledTransferService {
 
     @Transactional
     public ScheduledTransferResponse createSchedule(ScheduledTransferRequest request) {
-        // 현재 사용자 조회
         String email = getCurrentUserEmail();
         User user = userRepository.findByEmail(email)
                 .orElseThrow(() -> new IllegalArgumentException("사용자를 찾을 수 없습니다."));
 
-        Account fromAccount = accountRepository.findByUserId(user.getId())
-                .orElseThrow(() -> new IllegalStateException("계좌 정보를 찾을 수 없습니다."));
+        // 계좌 조회 (락 획득)
+        Account fromAccount = accountRepository.findByIdForUpdate(
+                accountRepository.findByUserId(user.getId())
+                        .orElseThrow(() -> new IllegalStateException("계좌 정보를 찾을 수 없습니다."))
+                        .getId()
+        ).orElseThrow(() -> new IllegalStateException("계좌 정보를 찾을 수 없습니다."));
 
         // 간편 비밀번호 확인
         simplePasswordService.verifySimplePasswordForUser(user.getId(), request.getPassword());
@@ -62,7 +66,15 @@ public class ScheduledTransferService {
             throw new IllegalArgumentException("본인 계좌로는 송금 예약을 할 수 없습니다.");
         }
 
-        // 예약 시간 검증 (최소 1분 후, 최대 1년 후)
+        // 잔액 확인 및 즉시 차감
+        if (!fromAccount.hasEnoughBalance(request.getAmount())) {
+            throw new IllegalArgumentException("잔액이 부족합니다.");
+        }
+
+        fromAccount.withdraw(request.getAmount());
+        accountRepository.save(fromAccount);
+
+        // 예약 시간 검증
         LocalDateTime now = LocalDateTime.now();
         LocalDateTime maxScheduleTime = now.plusYears(1);
         if (request.getScheduledAt().isBefore(now.plusMinutes(1))) {
@@ -84,9 +96,9 @@ public class ScheduledTransferService {
 
         ScheduledTransfer savedSchedule = scheduledTransferRepository.save(schedule);
 
-        log.info("송금 예약 생성: scheduleId={}, fromAccount={}, toAccount={}, amount={}, scheduledAt={}",
+        log.info("송금 예약 생성 및 잔액 차감: scheduleId={}, fromAccount={}, amount={}, balanceAfter={}",
                 savedSchedule.getId(), fromAccount.getAccountNumber(),
-                request.getToAccountNumber(), request.getAmount(), request.getScheduledAt());
+                request.getAmount(), fromAccount.getBalance());
 
         return ScheduledTransferResponse.of(savedSchedule);
     }
@@ -132,6 +144,18 @@ public class ScheduledTransferService {
             throw new IllegalArgumentException("접근 권한이 없습니다.");
         }
 
+        // 취소 시 잔액 환불
+        if (schedule.getStatus() == ScheduledTransfer.ScheduleStatus.PENDING) {
+            Account fromAccount = accountRepository.findByIdForUpdate(schedule.getFromAccount().getId())
+                    .orElseThrow(() -> new IllegalStateException("계좌를 찾을 수 없습니다."));
+
+            fromAccount.deposit(schedule.getAmount());
+            accountRepository.save(fromAccount);
+
+            log.info("예약 취소 및 잔액 환불: scheduleId={}, amount={}, balanceAfter={}",
+                    scheduleId, schedule.getAmount(), fromAccount.getBalance());
+        }
+
         schedule.cancel();
         scheduledTransferRepository.save(schedule);
 
@@ -150,22 +174,17 @@ public class ScheduledTransferService {
 
             // 계좌 상태 확인
             if (!fromAccount.isActive() || !toAccount.isActive()) {
+                // 실패 시 잔액 환불
+                fromAccount.deposit(schedule.getAmount());
+                accountRepository.save(fromAccount);
                 throw new IllegalStateException("계좌가 활성 상태가 아닙니다.");
             }
 
-            // 잔액 확인
-            if (!fromAccount.hasEnoughBalance(schedule.getAmount())) {
-                throw new IllegalArgumentException("잔액이 부족합니다.");
-            }
-
-            // 한도 확인
-            TransferLimit limit = transferLimitRepository.findByAccountId(fromAccount.getId())
-                    .orElse(null);
-            if (limit != null) {
-                limit.resetIfNewDay();
-                if (!limit.canTransfer(schedule.getAmount())) {
-                    throw new IllegalArgumentException("송금 한도를 초과했습니다.");
-                }
+            // 이미 차감되어 있으므로 잔액 확인 불필요
+            // 단, 안전을 위해 확인은 해도 됨
+            if (!fromAccount.hasEnoughBalance(BigDecimal.ZERO)) {
+                // 이론상 여기 도달 불가
+                log.warn("예약 송금 실행 시 잔액 이상: scheduleId={}", schedule.getId());
             }
 
             // 거래 생성
@@ -181,43 +200,60 @@ public class ScheduledTransferService {
                     .idempotencyKey(UUID.randomUUID().toString())
                     .build();
 
-            // 송금 실행
-            fromAccount.withdraw(schedule.getAmount());
+            // 송금 실행 (차감은 이미 되어있으므로 입금만)
             toAccount.deposit(schedule.getAmount());
             transaction.complete();
 
-            if (limit != null) {
-                limit.addUsage(schedule.getAmount());
-                transferLimitRepository.save(limit);
-            }
-
             transactionRepository.save(transaction);
-            accountRepository.save(fromAccount);
             accountRepository.save(toAccount);
 
             // 예약 완료 처리
             schedule.execute(transaction);
             scheduledTransferRepository.save(schedule);
 
-            log.info("예약 송금 실행 완료: scheduleId={}, transactionId={}", schedule.getId(), transaction.getId());
+            log.info("예약 송금 실행 완료: scheduleId={}, transactionId={}",
+                    schedule.getId(), transaction.getId());
 
-            // 알림 생성 (별도 트랜잭션으로 실행 - 실패해도 송금은 완료)
-            Long userId = fromAccount.getUser().getId();
-            Long transactionId = transaction.getId();
-            String description = schedule.getDescription();
-            // 트랜잭션 커밋 후 실행되도록 나중에 호출
-            sendScheduledTransferNotificationAsync(userId, transactionId, schedule.getAmount(), description, true);
+            // 알림 생성
+            sendScheduledTransferNotificationAsync(
+                    fromAccount.getUser().getId(),
+                    transaction.getId(),
+                    schedule.getAmount(),
+                    schedule.getDescription(),
+                    true
+            );
 
         } catch (Exception e) {
+            // 실행 실패 시 잔액 환불
+            try {
+                Account fromAccount = accountRepository.findByIdForUpdate(schedule.getFromAccount().getId())
+                        .orElse(null);
+                if (fromAccount != null) {
+                    fromAccount.deposit(schedule.getAmount());
+                    accountRepository.save(fromAccount);
+                    log.info("예약 송금 실패로 잔액 환불: scheduleId={}, amount={}",
+                            schedule.getId(), schedule.getAmount());
+                }
+            } catch (Exception refundError) {
+                log.error("잔액 환불 실패: scheduleId={}, error={}",
+                        schedule.getId(), refundError.getMessage());
+            }
+
             // 실행 실패 처리
             schedule.fail(e.getMessage());
             scheduledTransferRepository.save(schedule);
 
-            log.error("예약 송금 실행 실패: scheduleId={}, error={}", schedule.getId(), e.getMessage());
+            log.error("예약 송금 실행 실패: scheduleId={}, error={}",
+                    schedule.getId(), e.getMessage());
 
-            // 실패 알림 생성 (별도 트랜잭션)
-            Long userId = schedule.getFromAccount().getUser().getId();
-            sendScheduledTransferNotificationAsync(userId, null, schedule.getAmount(), e.getMessage(), false);
+            // 실패 알림
+            sendScheduledTransferNotificationAsync(
+                    schedule.getFromAccount().getUser().getId(),
+                    null,
+                    schedule.getAmount(),
+                    e.getMessage(),
+                    false
+            );
         }
     }
 
