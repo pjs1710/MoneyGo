@@ -1,5 +1,7 @@
 package com.study.moneygo.transaction.service;
 
+import com.study.moneygo.notification.service.EmailService;
+import com.study.moneygo.pdf.service.PdfService;
 import com.study.moneygo.transaction.dto.response.TransactionResponse;
 import com.study.moneygo.account.entity.Account;
 import com.study.moneygo.transaction.entity.Transaction;
@@ -19,6 +21,7 @@ import org.springframework.transaction.annotation.Transactional;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
+import java.util.List;
 
 @Slf4j
 @Service
@@ -29,6 +32,8 @@ public class TransactionService {
     private final TransactionRepository transactionRepository;
     private final AccountRepository accountRepository;
     private final UserRepository userRepository;
+    private final PdfService pdfService;
+    private final EmailService emailService;
 
     public Page<TransactionResponse> getTransactions(String type, LocalDate startDate, LocalDate endDate, Pageable pageable) {
         String email = getCurrentUserEmail();
@@ -144,6 +149,84 @@ public class TransactionService {
 
             return TransactionResponse.of(transaction, account.getId(), counterpartyName);
         });
+    }
+
+    public byte[] generateReceipt(Long transactionId) {
+        String email = getCurrentUserEmail();
+        User user = userRepository.findByEmail(email)
+                .orElseThrow(() -> new IllegalArgumentException("사용자를 찾을 수 없습니다."));
+        Account account = accountRepository.findByUserId(user.getId())
+                .orElseThrow(() -> new IllegalStateException("계좌 정보를 찾을 수 없습니다."));
+        Transaction transaction = transactionRepository.findById(transactionId)
+                .orElseThrow(() -> new IllegalArgumentException("거래 내역을 찾을 수 없습니다."));
+
+        // 권한 확인
+        boolean hasAccess = (transaction.getFromAccount() != null &&
+                transaction.getFromAccount().getId().equals(account.getId())) ||
+                (transaction.getToAccount() != null &&
+                        transaction.getToAccount().getId().equals(account.getId()));
+
+        if (!hasAccess) {
+            throw new IllegalArgumentException("접근 권한이 없습니다.");
+        }
+
+        // 상대방 이름 조회
+        String counterpartyName = null;
+        if (transaction.getFromAccount() != null &&
+                !transaction.getFromAccount().getId().equals(account.getId())) {
+            counterpartyName = transaction.getFromAccount().getUser().getName();
+        } else if (transaction.getToAccount() != null &&
+                !transaction.getToAccount().getId().equals(account.getId())) {
+            counterpartyName = transaction.getToAccount().getUser().getName();
+        }
+
+        return pdfService.generateReceiptPdf(transaction, account.getAccountNumber(), counterpartyName);
+    }
+
+    public void sendReceiptEmail(Long transactionId, String emailAddress) {
+        byte[] pdf = generateReceipt(transactionId);
+
+        try {
+            emailService.sendReceiptEmail(emailAddress, pdf, transactionId);
+            log.info("거래 영수증 이메일 발송 완료: transactionId={}, email={}", transactionId, emailAddress);
+        } catch (Exception e) {
+            log.error("거래 영수증 이메일 발송 실패", e);
+            throw new RuntimeException("이메일 발송에 실패했습니다.", e);
+        }
+    }
+
+    public byte[] generateStatement(Integer year, Integer month) {
+        String email = getCurrentUserEmail();
+        User user = userRepository.findByEmail(email)
+                .orElseThrow(() -> new IllegalArgumentException("사용자를 찾을 수 없습니다."));
+
+        Account account = accountRepository.findByUserId(user.getId())
+                .orElseThrow(() -> new IllegalStateException("계좌 정보를 찾을 수 없습니다."));
+
+        // 날짜 범위 계산
+        LocalDateTime startDate;
+        LocalDateTime endDate;
+
+        if (month != null) {
+            // 월별
+            startDate = LocalDateTime.of(year, month, 1, 0, 0, 0);
+            endDate = startDate.plusMonths(1).minusSeconds(1);
+        } else {
+            // 연도별
+            startDate = LocalDateTime.of(year, 1, 1, 0, 0, 0);
+            endDate = LocalDateTime.of(year, 12, 31, 23, 59, 59);
+        }
+
+        // 거래 내역 조회
+        List<Transaction> transactions = transactionRepository.findByAccountAndDateRangeList(
+                account.getId(), startDate, endDate);
+
+        return pdfService.generateStatementPdf(
+                transactions,
+                account.getAccountNumber(),
+                user.getName(),
+                year,
+                month);
     }
 
     private String getCounterpartyName(Transaction transaction, Long myAccountId) {

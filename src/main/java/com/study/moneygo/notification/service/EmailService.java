@@ -1,9 +1,12 @@
 package com.study.moneygo.notification.service;
 
+import jakarta.mail.internet.MimeMessage;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.core.io.ByteArrayResource;
 import org.springframework.mail.SimpleMailMessage;
 import org.springframework.mail.javamail.JavaMailSender;
+import org.springframework.mail.javamail.MimeMessageHelper;
 import org.springframework.stereotype.Service;
 
 import java.math.BigDecimal;
@@ -167,6 +170,45 @@ public class EmailService {
         );
 
         sendNotificationEmail(to, title, content);
+    }
+
+    public void sendReceiptEmail(String to, byte[] pdfAttachment, Long transactionId) {
+        try {
+            MimeMessage message = mailSender.createMimeMessage();
+            MimeMessageHelper helper = new MimeMessageHelper(message, true, "UTF-8");
+
+            helper.setTo(to);
+            helper.setSubject("[MoneyGo] 거래 영수증");
+
+            String content = String.format("""
+                <html>
+                <body style="font-family: Arial, sans-serif;">
+                    <h2>거래 영수증</h2>
+                    <p>안녕하세요.</p>
+                    <p>요청하신 거래 영수증을 첨부파일로 보내드립니다.</p>
+                    <p><strong>거래번호:</strong> %s</p>
+                    <hr>
+                    <p style="color: #666; font-size: 12px;">
+                        본 메일은 발신 전용입니다.<br>
+                        MoneyGo
+                    </p>
+                </body>
+                </html>
+                """, transactionId);
+
+            helper.setText(content, true);
+
+            // PDF 첨부
+            helper.addAttachment("receipt_" + transactionId + ".pdf",
+                    new ByteArrayResource(pdfAttachment));
+
+            mailSender.send(message);
+
+            log.info("거래 영수증 이메일 발송 완료: to={}, transactionId={}", to, transactionId);
+        } catch (Exception e) {
+            log.error("거래 영수증 이메일 발송 실패: to={}, transactionId={}", to, transactionId, e);
+            throw new RuntimeException("이메일 발송에 실패했습니다.", e);
+        }
     }
 
     private String formatCurrency(BigDecimal amount) {
