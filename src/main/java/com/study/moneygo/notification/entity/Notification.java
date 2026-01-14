@@ -57,7 +57,8 @@ public class Notification extends BaseEntity {
         QR_PAYMENT_RECEIVED,            // QR 결제 받음
         QR_PAYMENT_SENT,                // QR 결제 완료
         ACCOUNT_LOCKED,                 // 계정 잠김
-        LARGE_AMOUNT_ALERT              // 고액 거래 알림
+        LARGE_AMOUNT_ALERT,             // 고액 거래 알림
+        SELF_DEPOSIT                    // 본인 입금
     }
 
     /** =====================================

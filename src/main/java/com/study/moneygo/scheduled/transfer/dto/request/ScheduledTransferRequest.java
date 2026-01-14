@@ -30,5 +30,6 @@ public class ScheduledTransferRequest {
     private LocalDateTime scheduledAt;
 
     @NotBlank(message = "비밀번호는 필수입니다.")
-    private String password;
+    @Pattern(regexp = "^\\d{6}$", message = "간편 비밀번호는 6자리 숫자여야 합니다.")
+    private String simplePassword;
 }

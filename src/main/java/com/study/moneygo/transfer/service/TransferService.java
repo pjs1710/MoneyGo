@@ -53,7 +53,7 @@ public class TransferService {
         }
 
         // 5. 간편 비밀번호 확인
-        simplePasswordService.verifySimplePasswordForUser(user.getId(), request.getPassword());
+        simplePasswordService.verifySimplePasswordForUser(user.getId(), request.getSimplePassword());
 
         // 6. 계좌 상태 확인
         if (!fromAccount.isActive()) {

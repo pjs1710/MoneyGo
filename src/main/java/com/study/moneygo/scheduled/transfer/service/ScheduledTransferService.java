@@ -54,7 +54,7 @@ public class ScheduledTransferService {
         ).orElseThrow(() -> new IllegalStateException("계좌 정보를 찾을 수 없습니다."));
 
         // 간편 비밀번호 확인
-        simplePasswordService.verifySimplePasswordForUser(user.getId(), request.getPassword());
+        simplePasswordService.verifySimplePasswordForUser(user.getId(), request.getSimplePassword());
 
         // 받는 계좌 존재 확인
         Account toAccount = accountRepository.findByAccountNumber(request.getToAccountNumber())

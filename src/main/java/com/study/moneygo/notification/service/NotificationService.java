@@ -372,6 +372,28 @@ public class NotificationService {
         log.info("읽은 알림 전체 삭제 완료: userId={}, count={}", user.getId(), readNotifications.size());
     }
 
+    /*
+    내 계좌에 입금
+     */
+    @Transactional
+    public void createSelfDepositNotification(User user, Transaction transaction) {
+        try {
+            createNotificationWithEmail(
+                    user,
+                    Notification.NotificationType.SELF_DEPOSIT,
+                    "계좌 입금이 완료되었습니다.",
+                    String.format("내 계좌에 %s원이 입금되었습니다.", formatAmount(transaction.getAmount())),
+                    transaction.getId(),
+                    transaction.getAmount(),
+                    null,
+                    null
+            );
+        } catch (Exception e) {
+            log.error("본인 입금 알림 생성 중 오류 발생: userId={}, error={}",
+                    user.getId(), e.getMessage(), e);
+        }
+    }
+
 
     private String formatAmount(BigDecimal amount) {
         return String.format("%,d", amount.longValue());

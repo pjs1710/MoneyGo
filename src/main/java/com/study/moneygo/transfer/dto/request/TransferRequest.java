@@ -25,5 +25,6 @@ public class TransferRequest {
     private String description;
 
     @NotBlank(message = "비밀번호는 필수입니다.")
-    private String password; // 간편 비밀번호 OR 거래 비밀번호
+    @Pattern(regexp = "^\\d{6}$", message = "간편 비밀번호는 6자리 숫자여야 합니다.")
+    private String simplePassword; // 간편 비밀번호
 }

@@ -114,7 +114,7 @@ public class QrPaymentService {
 
         // 간편 비밀번호 확인
         log.info("간편 비밀번호 확인 시작: buyerId={}", buyer.getId());
-        simplePasswordService.verifySimplePasswordForUser(buyer.getId(), request.getPassword());
+        simplePasswordService.verifySimplePasswordForUser(buyer.getId(), request.getSimplePassword());
         log.info("간편 비밀번호 확인 완료");
 
         // 계좌 상태 확인
