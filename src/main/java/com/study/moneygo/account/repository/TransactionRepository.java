@@ -37,4 +37,34 @@ public interface TransactionRepository extends JpaRepository<Transaction, Long> 
             @Param("endDate") LocalDateTime endDate,
             Pageable pageable
     );
+
+    /**
+     * 계좌와 날짜 범위로 거래 내역 조회
+     */
+    @Query("SELECT t FROM Transaction t " +
+            "WHERE (t.fromAccount.id = :accountId OR t.toAccount.id = :accountId) " +
+            "AND t.createdAt BETWEEN :startDate AND :endDate " +
+            "AND t.status = 'COMPLETED' " +
+            "ORDER BY t.createdAt DESC")
+    Page<Transaction> findByAccountAndDateRange(
+            @Param("accountId") Long accountId,
+            @Param("startDate") LocalDateTime startDate,
+            @Param("endDate") LocalDateTime endDate,
+            Pageable pageable);
+
+    /**
+     * 계좌, 거래 유형, 날짜 범위로 거래 내역 조회
+     */
+    @Query("SELECT t FROM Transaction t " +
+            "WHERE (t.fromAccount.id = :accountId OR t.toAccount.id = :accountId) " +
+            "AND t.type = :type " +
+            "AND t.createdAt BETWEEN :startDate AND :endDate " +
+            "AND t.status = 'COMPLETED' " +
+            "ORDER BY t.createdAt DESC")
+    Page<Transaction> findByAccountAndTypeAndDateRange(
+            @Param("accountId") Long accountId,
+            @Param("type") Transaction.TransactionType type,
+            @Param("startDate") LocalDateTime startDate,
+            @Param("endDate") LocalDateTime endDate,
+            Pageable pageable);
 }
