@@ -1,8 +1,8 @@
-package com.study.moneygo.account.controller;
+package com.study.moneygo.transaction.controller;
 
 
-import com.study.moneygo.account.dto.response.TransactionResponse;
-import com.study.moneygo.account.service.TransactionService;
+import com.study.moneygo.transaction.dto.response.TransactionResponse;
+import com.study.moneygo.transaction.service.TransactionService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.domain.Page;

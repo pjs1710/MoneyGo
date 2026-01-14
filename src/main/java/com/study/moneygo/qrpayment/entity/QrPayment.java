@@ -1,7 +1,7 @@
 package com.study.moneygo.qrpayment.entity;
 
 import com.study.moneygo.account.entity.Account;
-import com.study.moneygo.account.entity.Transaction;
+import com.study.moneygo.transaction.entity.Transaction;
 import com.study.moneygo.util.entity.BaseEntity;
 import jakarta.persistence.*;
 import lombok.AllArgsConstructor;

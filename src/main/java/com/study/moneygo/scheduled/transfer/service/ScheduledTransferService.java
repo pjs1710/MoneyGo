@@ -1,9 +1,9 @@
 package com.study.moneygo.scheduled.transfer.service;
 
 import com.study.moneygo.account.entity.Account;
-import com.study.moneygo.account.entity.Transaction;
+import com.study.moneygo.transaction.entity.Transaction;
 import com.study.moneygo.account.repository.AccountRepository;
-import com.study.moneygo.account.repository.TransactionRepository;
+import com.study.moneygo.transaction.repository.TransactionRepository;
 import com.study.moneygo.transfer.repository.TransferLimitRepository;
 import com.study.moneygo.notification.service.NotificationService;
 import com.study.moneygo.scheduled.transfer.dto.request.ScheduledTransferRequest;

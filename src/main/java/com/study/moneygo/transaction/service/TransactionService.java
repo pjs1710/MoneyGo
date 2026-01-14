@@ -1,10 +1,10 @@
-package com.study.moneygo.account.service;
+package com.study.moneygo.transaction.service;
 
-import com.study.moneygo.account.dto.response.TransactionResponse;
+import com.study.moneygo.transaction.dto.response.TransactionResponse;
 import com.study.moneygo.account.entity.Account;
-import com.study.moneygo.account.entity.Transaction;
+import com.study.moneygo.transaction.entity.Transaction;
 import com.study.moneygo.account.repository.AccountRepository;
-import com.study.moneygo.account.repository.TransactionRepository;
+import com.study.moneygo.transaction.repository.TransactionRepository;
 import com.study.moneygo.user.entity.User;
 import com.study.moneygo.user.repository.UserRepository;
 import lombok.RequiredArgsConstructor;

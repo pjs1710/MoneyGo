@@ -4,7 +4,7 @@ import com.study.moneygo.transfer.dto.request.TransferRequest;
 import com.study.moneygo.transfer.dto.response.TransferResponse;
 import com.study.moneygo.account.entity.Account;
 import com.study.moneygo.account.repository.AccountRepository;
-import com.study.moneygo.account.repository.TransactionRepository;
+import com.study.moneygo.transaction.repository.TransactionRepository;
 import com.study.moneygo.transfer.repository.TransferLimitRepository;
 import com.study.moneygo.transfer.service.TransferService;
 import com.study.moneygo.qrpayment.repository.QrPaymentRepository;

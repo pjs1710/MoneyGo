@@ -1,6 +1,6 @@
 package com.study.moneygo.qrpayment.dto.response;
 
-import com.study.moneygo.account.entity.Transaction;
+import com.study.moneygo.transaction.entity.Transaction;
 import com.study.moneygo.qrpayment.entity.QrPayment;
 import lombok.AllArgsConstructor;
 import lombok.Builder;

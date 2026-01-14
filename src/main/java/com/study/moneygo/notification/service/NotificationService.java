@@ -1,6 +1,6 @@
 package com.study.moneygo.notification.service;
 
-import com.study.moneygo.account.entity.Transaction;
+import com.study.moneygo.transaction.entity.Transaction;
 import com.study.moneygo.notification.dto.response.NotificationResponse;
 import com.study.moneygo.notification.entity.Notification;
 import com.study.moneygo.notification.entity.NotificationSetting;
